@@ -7,17 +7,20 @@ import numpy as np
 BASE_PARAMS = dict(   # ilkin rəqəmlər (rəqib komandalar bunlardan istifadə edir)
     shoot_dist=30, pass_pressure=9, pass_clear=7, lane_width=3.5,
     support_ahead=14, def_line=0.35, def_zone=0.55, avoid_radius=9,
+    pass_gain=999, pass_max=35,   # ilkin komanda proaktiv pas vermir (köhnə davranış)
 )
 
-PARAMS = dict(   # bizim komandanın tənzimlənmiş rəqəmləri (2-ci tənzimləmə)
-    shoot_dist=50,      # qapıya bu məsafədən yaxındırsa vur
-    pass_pressure=12,   # rəqib bu qədər yaxındırsa pas ver
-    pass_clear=8,       # pas alan yoldaşın ətrafı bu qədər boş olmalıdır
-    lane_width=2,       # pas xəttinə rəqib bu qədər yaxındırsa pas verilmir
-    support_ahead=32,   # hücum dəstək qaçışı topdan nə qədər irəlidə
-    def_line=0.6,       # müdafiə mövqeyi: qapıdan topa doğru nisbət
-    def_zone=0.9,       # top bu nisbətdən geridədirsə müdafiəçi topa çıxır
-    avoid_radius=5,     # dribling zamanı rəqibdən yayınma radiusu
+PARAMS = dict(   # bizim komanda (yeni simulyator üçün ilkin nöqtə; python tune.py ilə tənzimləyin)
+    shoot_dist=30,      # qapıya bu məsafədən yaxındırsa vur
+    pass_pressure=9,    # rəqib bu qədər yaxındırsa pas ver
+    pass_clear=7,       # pas alan yoldaşın ətrafı bu qədər boş olmalıdır
+    lane_width=3.5,     # pas xəttinə rəqib bu qədər yaxındırsa pas verilmir
+    support_ahead=14,   # hücum dəstək qaçışı topdan nə qədər irəlidə
+    def_line=0.35,      # müdafiə mövqeyi: qapıdan topa doğru nisbət
+    def_zone=0.55,      # top bu nisbətdən geridədirsə müdafiəçi topa çıxır
+    avoid_radius=9,     # dribling zamanı rəqibdən yayınma radiusu
+    pass_gain=6,        # yoldaş bu qədər irəlidə və boşdursa, təzyiq olmasa da pas ver
+    pass_max=35,        # pasın maksimum məsafəsi
 )
 
 
@@ -57,6 +60,35 @@ class RuleAgent:
         self.p = {**PARAMS, **(params or {})}
 
     def decide(self, s):
+        return self.separate(s, self._decide(s))
+
+    def separate(self, s, cmd):
+        """Yoldaşlardan aralı dayan: çox yaxın olanlardan əks istiqamətə itələnir (topu daşıyan istisnadır)."""
+        if not cmd or s["has_ball"] or cmd.get("kick"):
+            return cmd
+        me = s["me"]["pos"]
+        if dist(me, s["ball"]) < 6:       # topa yaxın olanlar top uğrunda mübarizə edir, ayrılmırlar
+            return cmd
+        px = py = 0.0
+        R = 5.0
+        for m in s["mates"]:
+            d = dist(me, m["pos"])
+            if 1e-6 < d < R:
+                w = (R - d) / R
+                px += (me[0] - m["pos"][0]) / d * w
+                py += (me[1] - m["pos"][1]) / d * w
+        if px == 0.0 and py == 0.0:
+            return cmd
+        vx, vy = cmd.get("move", (0, 0))
+        nx, ny = vx + 1.5 * px, vy + 1.5 * py
+        n = float(np.hypot(nx, ny))
+        if n > 1:
+            nx, ny = nx / n, ny / n
+        out = dict(cmd)
+        out["move"] = (nx, ny)
+        return out
+
+    def _decide(self, s):
         r = s["me"]["role"]
         if r == "ATT":
             return self.attacker(s)
@@ -88,8 +120,41 @@ class RuleAgent:
                 res.append(m)
         return sorted(res, key=lambda m: -m["pos"][0])
 
+    def best_pass(self, s, min_gain):
+        """Boş, pas xətti açıq olan ən yaxşı yoldaşı seçir (irəlidə və uzaq olmayan yaxşıdır)."""
+        me, p = s["me"]["pos"], self.p
+        best, best_val = None, -1e9
+        for m in s["mates"]:
+            if m["index"] == 0:                      # qapıçıya pas vermə
+                continue
+            mp = m["pos"]
+            d = dist(me, mp)
+            gain = mp[0] - me[0]
+            if d < 5 or d > p["pass_max"] or gain < min_gain:
+                continue
+            if any(dist(o["pos"], mp) < p["pass_clear"] for o in s["opps"]):
+                continue
+            if not self.lane_clear(s, me, mp):
+                continue
+            val = gain - 0.15 * d + 0.3 * min(self.nearest_opp(s, mp), 15)
+            if val > best_val:
+                best, best_val = m, val
+        return best
+
+    def pass_decision(self, s):
+        """Topdakı oyunçu pas verməlidirmi? Təzyiq altında istənilən yaxşı pas, yoxsa yalnız xeyli irəlidəki boş yoldaşa."""
+        me, p = s["me"]["pos"], self.p
+        if self.nearest_opp(s, me) < p["pass_pressure"]:
+            m = self.best_pass(s, -4)
+            if m:
+                return self.pass_to(s, m)
+        m = self.best_pass(s, p["pass_gain"])
+        if m:
+            return self.pass_to(s, m)
+        return None
+
     def nearest_opp(self, s, pos):
-        return min(dist(o["pos"], pos) for o in s["opps"])
+        return min((dist(o["pos"], pos) for o in s["opps"]), default=999.0)
 
     def kick_cmd(self, target, power):
         return {"move": (0, 0), "kick": {"target": target, "power": power}}
@@ -134,10 +199,9 @@ class RuleAgent:
         if s["has_ball"]:
             if dist(me, s["opp_goal"]) < p["shoot_dist"]:
                 return self.shoot(s)
-            if self.nearest_opp(s, me) < p["pass_pressure"]:
-                mates = self.open_forward_mates(s)
-                if mates:
-                    return self.pass_to(s, mates[0])
+            ps = self.pass_decision(s)
+            if ps:
+                return ps
             return self.dribble(s)
         if s["team_has_ball"]:
             lane = 18 if s["me"]["index"] == 3 else 42
@@ -152,9 +216,9 @@ class RuleAgent:
         if s["has_ball"]:
             if dist(me, s["opp_goal"]) < self.p["shoot_dist"] - 5:
                 return self.shoot(s)
-            mates = [m for m in self.open_forward_mates(s) if m["role"] == "ATT"] or self.open_forward_mates(s)
-            if mates and self.nearest_opp(s, me) < self.p["pass_pressure"] + 4:
-                return self.pass_to(s, mates[0])
+            ps = self.pass_decision(s)
+            if ps:
+                return ps
             return self.dribble(s)
         if self.is_closest(s):
             return self.chase(s)
@@ -222,7 +286,7 @@ class ZoneAgent(RuleAgent):
             return self.chase(s)
         return move_to(me, (4, ty), stop=0.3)
 
-    def decide(self, s):
+    def _decide(self, s):
         me, ball, st = s["me"]["pos"], s["ball"], self.st
         role, idx = s["me"]["role"], s["me"]["index"]
         if idx == 0 and not s["has_ball"]:

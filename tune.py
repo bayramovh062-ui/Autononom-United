@@ -2,7 +2,7 @@
 Rəqiblər: zone, zone_def, zone_att, self (başlanğıc komandamızın özü)  (hamısına qarşı eyni anda yaxşı olmalıdır).
 İstifadə:  python tune.py          (təxminən 10 dəq)
            python tune.py 300      (300 saniyəlik vaxt limiti)
-Başlanğıc nöqtə: agents.py-dəki PARAMS. Nəticəni oraya kopyalayın.
+Başlanğıc nöqtə: agents.py-dəki PARAMS. Fitness = xal + 0.05*qol fərqi + 0.05*pas (matç başına, maks 20). Nəticəni oraya kopyalayın.
 """
 import random
 import sys
@@ -24,20 +24,23 @@ RANGES = dict(   # genişləndirilmiş axtarış aralıqları
     def_line=(0.15, 0.9),
     def_zone=(0.3, 0.9),
     avoid_radius=(5, 24),
+    pass_gain=(2, 20),
+    pass_max=(20, 50),
 )
 
 
 def play_set(args):
     params, opp, seeds = args
-    pts = gd = 0
+    pts = gd = passes = 0
     for k in seeds:
         if k % 2 == 0:
-            a, b = Match(RuleAgent(params), make_opponent(opp), seed=k).play()
+            m = Match(RuleAgent(params), make_opponent(opp), seed=k); a, b = m.play(); ps = m.stats[0]["passes"]
         else:
-            b, a = Match(make_opponent(opp), RuleAgent(params), seed=k).play()
+            m = Match(make_opponent(opp), RuleAgent(params), seed=k); b, a = m.play(); ps = m.stats[1]["passes"]
         pts += 3 if a > b else (1 if a == b else 0)
         gd += a - b
-    return pts, gd
+        passes += min(ps, 20)          # pas sayı (20-dən yuxarısı artıq sayılmır)
+    return pts, gd, passes
 
 
 def fitness(pool, params, seeds, opps):
@@ -49,7 +52,10 @@ def fitness(pool, params, seeds, opps):
     res = pool.map(play_set, jobs)
     pts = sum(r[0] for r in res)
     gd = sum(r[1] for r in res)
-    return pts + 0.05 * gd, pts, gd
+    passes = sum(r[2] for r in res)
+    n_matches = len(seeds) * len(opps)
+    # matç başına pas (maks 20) də mükafatlandırılır: komanda əl-ələ oynasın, yalnız dribling etməsin
+    return pts + 0.05 * gd + 0.05 * passes, pts, gd
 
 
 def clamp(name, v):
