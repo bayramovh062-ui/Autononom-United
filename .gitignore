@@ -1,1 +1,1 @@
-__pycache__/, .env, models/
+__pycache__/, .env, models/git add . && git commit -m "llm coach" && git push

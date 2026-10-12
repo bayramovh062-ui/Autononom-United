@@ -1,0 +1,6 @@
+﻿vs self     : 11 q╔Öl╔Öb╔Ö, 20 b╔Örab╔Örlik,  9 m╔Ö─ƒlubiyy╔Öt | qol 15:14
+vs zone     :  9 q╔Öl╔Öb╔Ö, 18 b╔Örab╔Örlik, 13 m╔Ö─ƒlubiyy╔Öt | qol 21:22
+vs zone_def :  9 q╔Öl╔Öb╔Ö, 16 b╔Örab╔Örlik, 15 m╔Ö─ƒlubiyy╔Öt | qol 11:25
+vs zone_att : 22 q╔Öl╔Öb╔Ö, 15 b╔Örab╔Örlik,  3 m╔Ö─ƒlubiyy╔Öt | qol 31:6
+vs old      : 11 q╔Öl╔Öb╔Ö, 21 b╔Örab╔Örlik,  8 m╔Ö─ƒlubiyy╔Öt | qol 15:14
+vs chase    : 40 q╔Öl╔Öb╔Ö,  0 b╔Örab╔Örlik,  0 m╔Ö─ƒlubiyy╔Öt | qol 330:11
